@@ -44,12 +44,13 @@ except ImportError:
 try:
     Parser = configparser.ConfigParser
 except AttributeError:
-    Parser = configparser.SafeConfigParser    
+    Parser = configparser.SafeConfigParser
 from . import sparse
 import collections
 import warnings
 from tempfile import mktemp
 from .constants import *
+from threading import Timer
 
 import logging
 log = logging.getLogger(__name__)
@@ -1386,7 +1387,7 @@ class COIN_CMD(LpSolver_CMD):
         """True if the solver is available"""
         return self.executable(self.path)
 
-    def solve_CBC(self, lp, use_mps=True):
+    def solve_CBC(self, lp, use_mps=True, ttl=None):
         """Solve a MIP problem using CBC"""
         if not self.executable(self.path):
             raise PulpSolverError("Pulp: cannot execute %s cwd: %s"%(self.path,
@@ -1440,10 +1441,25 @@ class COIN_CMD(LpSolver_CMD):
         args = []
         args.append(self.path)
         args.extend(cmds[1:].split())
-        cbc = subprocess.Popen(args, stdout = pipe, stderr = pipe)
-        if cbc.wait() != 0:
-            raise PulpSolverError("Pulp: Error while trying to execute " +  \
+
+        cbc = subprocess.Popen(args, stdout=pipe, stderr=pipe)
+
+        if ttl is not None:
+            kill = lambda process: process.kill()
+            my_timer = Timer(ttl, kill, [cbc])
+
+            try:
+                my_timer.start()
+                if cbc.wait() != 0:
+                    raise PulpSolverError("Pulp: Error while trying to execute " +  \
                                     self.path)
+            finally:
+                my_timer.cancel()
+        else:
+            if cbc.wait() != 0:
+                raise PulpSolverError("Pulp: Error while trying to execute " +  \
+                                    self.path)
+
         if pipe:
             pipe.close()
         if not os.path.exists(tmpSol):
